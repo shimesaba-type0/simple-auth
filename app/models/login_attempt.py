@@ -29,7 +29,8 @@ class LoginAttempt(Base):
     user = relationship("User", back_populates="login_attempts")
 
     @classmethod
-    def create_login_attempt(cls, user_id: int = None, ip_address: str = "", user_agent: str = "", success: bool = False) -> "LoginAttempt":
+    def create_login_attempt(cls, user_id: int = None, ip_address: str = "",
+        user_agent: str = "", success: bool = False) -> "LoginAttempt":
         """
         新しいログイン試行履歴を作成する
         

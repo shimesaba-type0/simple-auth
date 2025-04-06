@@ -12,11 +12,11 @@ from typing import Any, Dict, List, Optional, Union
 from dotenv import load_dotenv
 from pydantic import (
     AnyHttpUrl,
-    BaseSettings,
     Field,
     PostgresDsn,
-    validator,
+    field_validator,
 )
+from pydantic_settings import BaseSettings
 
 # プロジェクトのルートディレクトリを取得
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # データベース設定
     DATABASE_URL: str = "sqlite:///instance/simple_auth.db"
 
-    @validator("DATABASE_URL")
+    @field_validator("DATABASE_URL")
     def validate_database_url(cls, v: str) -> str:
         """
         SQLiteのURLを検証し、必要に応じてパスを絶対パスに変換します。
@@ -81,11 +81,10 @@ class Settings(BaseSettings):
     # セッション設定
     SESSION_TIMEOUT: int = 24  # 時間
 
-    class Config:
-        """Pydantic設定クラス"""
-
-        env_file = ".env"
-        case_sensitive = True
+    model_config = {
+        "env_file": ".env",
+        "case_sensitive": True
+    }
 
 
 # 設定インスタンスを作成

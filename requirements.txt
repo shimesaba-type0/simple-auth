@@ -1,0 +1,24 @@
+# Web Framework
+fastapi>=0.95.0
+uvicorn>=0.22.0
+pydantic>=1.10.7
+
+# Database
+sqlalchemy>=2.0.0
+alembic>=1.10.3
+
+# Security
+argon2-cffi>=21.3.0
+python-jose>=3.3.0
+python-multipart>=0.0.6
+passlib>=1.7.4
+
+# Testing
+pytest>=7.3.1
+pytest-cov>=4.1.0
+httpx>=0.24.0
+
+# Utilities
+python-dotenv>=1.0.0
+email-validator>=2.0.0
+

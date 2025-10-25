@@ -2,9 +2,24 @@
 
 ## 概要
 
-PostgreSQL をメインデータベース、Redis をセッション・キャッシュストアとして使用します。
+**SQLite3** をメインデータベース、**Redis** をセッション・キャッシュストアとして使用します。
 
-## PostgreSQL スキーマ
+### SQLite3 を選んだ理由
+
+✅ **セットアップが簡単**: ファイルベース、サーバー不要
+✅ **依存関係が少ない**: デプロイが容易
+✅ **バックアップが簡単**: ファイルコピーだけ
+✅ **十分なパフォーマンス**: 小〜中規模（数千ユーザー）まで対応可能
+
+### 制限事項
+
+⚠️ **並行書き込み**: 同時に1つの書き込みのみ（読み込みは複数可）
+⚠️ **UUID型なし**: TEXT型で保存（アプリケーション側で生成）
+⚠️ **INET型なし**: IPアドレスは TEXT型で保存
+
+この認証サーバーの用途では、これらの制限は問題になりません。
+
+## SQLite3 スキーマ
 
 ### 1. users テーブル
 
@@ -12,19 +27,19 @@ PostgreSQL をメインデータベース、Redis をセッション・キャッ
 
 ```sql
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) NOT NULL UNIQUE,
-    display_name VARCHAR(100),
+    id TEXT PRIMARY KEY,  -- UUID（アプリケーション側で生成）
+    email TEXT NOT NULL UNIQUE,
+    display_name TEXT,
     passphrase_hash TEXT NOT NULL,  -- Argon2idハッシュ
-    role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
-    locked BOOLEAN NOT NULL DEFAULT false,
-    locked_until TIMESTAMP WITH TIME ZONE,
+    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    locked INTEGER NOT NULL DEFAULT 0,  -- SQLite3はBOOLEANをINTEGERで保存 (0=false, 1=true)
+    locked_until TEXT,  -- ISO 8601形式のタイムスタンプ
     lock_reason TEXT,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    last_login_at TIMESTAMP WITH TIME ZONE,
-    deleted_at TIMESTAMP WITH TIME ZONE  -- 論理削除用
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login_at TEXT,
+    deleted_at TEXT  -- 論理削除用
 );
 
 -- インデックス
@@ -40,23 +55,24 @@ CREATE INDEX idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NULL;
 
 ```sql
 CREATE TABLE login_history (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    email VARCHAR(255) NOT NULL,  -- 削除されたユーザーの履歴保持のため
-    login_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    logout_at TIMESTAMP WITH TIME ZONE,
-    logout_type VARCHAR(20) CHECK (logout_type IN ('user', 'admin_forced', 'session_expired')),
-    ip_address INET NOT NULL,
+    id TEXT PRIMARY KEY,  -- UUID
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,  -- 削除されたユーザーの履歴保持のため
+    login_at TEXT NOT NULL DEFAULT (datetime('now')),
+    logout_at TEXT,
+    logout_type TEXT CHECK (logout_type IN ('user', 'admin_forced', 'session_expired')),
+    ip_address TEXT NOT NULL,  -- IPアドレスを文字列で保存
     user_agent TEXT,
-    result VARCHAR(20) NOT NULL CHECK (result IN ('success', 'failed')),
-    failure_reason VARCHAR(50) CHECK (failure_reason IN (
+    result TEXT NOT NULL CHECK (result IN ('success', 'failed')),
+    failure_reason TEXT CHECK (failure_reason IN (
         'invalid_passphrase',
         'invalid_otp',
         'locked',
         'user_not_found',
         'rate_limited'
     )),
-    session_id VARCHAR(255)
+    session_id TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- インデックス
@@ -72,15 +88,17 @@ CREATE INDEX idx_login_history_session_id ON login_history(session_id);
 
 ```sql
 CREATE TABLE notifications (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    type VARCHAR(20) NOT NULL CHECK (type IN ('admin', 'personal', 'system')),
-    target_user_id UUID REFERENCES users(id) ON DELETE CASCADE,  -- personalの場合のみ
-    title VARCHAR(200) NOT NULL,
+    id TEXT PRIMARY KEY,  -- UUID
+    type TEXT NOT NULL CHECK (type IN ('admin', 'personal', 'system')),
+    target_user_id TEXT,  -- personalの場合のみ
+    title TEXT NOT NULL,
     content TEXT NOT NULL,
-    priority VARCHAR(20) NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
-    created_by UUID REFERENCES users(id) ON DELETE SET NULL,  -- 作成した管理者
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMP WITH TIME ZONE  -- 有効期限（オプション）
+    priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+    created_by TEXT,  -- 作成した管理者のID
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT,  -- 有効期限（オプション）
+    FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- インデックス
@@ -95,11 +113,13 @@ CREATE INDEX idx_notifications_created_at ON notifications(created_at DESC);
 
 ```sql
 CREATE TABLE notification_reads (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    notification_id UUID NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    read_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    UNIQUE(notification_id, user_id)
+    id TEXT PRIMARY KEY,  -- UUID
+    notification_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    read_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(notification_id, user_id),
+    FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- インデックス
@@ -113,10 +133,11 @@ CREATE INDEX idx_notification_reads_notification_id ON notification_reads(notifi
 
 ```sql
 CREATE TABLE user_dashboards (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY,  -- UUID
+    user_id TEXT NOT NULL UNIQUE,
     content TEXT,  -- Markdown形式
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- インデックス
@@ -129,17 +150,18 @@ CREATE INDEX idx_user_dashboards_user_id ON user_dashboards(user_id);
 
 ```sql
 CREATE TABLE audit_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    action VARCHAR(50) NOT NULL,
-    actor_type VARCHAR(20) NOT NULL CHECK (actor_type IN ('user', 'admin', 'system')),
-    actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    actor_email VARCHAR(255),
-    target_type VARCHAR(50),
-    target_id UUID,
-    ip_address INET,
+    id TEXT PRIMARY KEY,  -- UUID
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    action TEXT NOT NULL,
+    actor_type TEXT NOT NULL CHECK (actor_type IN ('user', 'admin', 'system')),
+    actor_id TEXT,
+    actor_email TEXT,
+    target_type TEXT,
+    target_id TEXT,
+    ip_address TEXT,
     user_agent TEXT,
-    details JSONB
+    details TEXT,  -- JSON形式の文字列
+    FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- インデックス
@@ -147,7 +169,6 @@ CREATE INDEX idx_audit_logs_timestamp ON audit_logs(timestamp DESC);
 CREATE INDEX idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX idx_audit_logs_actor_id ON audit_logs(actor_id);
 CREATE INDEX idx_audit_logs_target_id ON audit_logs(target_id);
-CREATE INDEX idx_audit_logs_details ON audit_logs USING gin(details);  -- JSONBの検索用
 ```
 
 ### 7. system_settings テーブル
@@ -156,11 +177,12 @@ CREATE INDEX idx_audit_logs_details ON audit_logs USING gin(details);  -- JSONB�
 
 ```sql
 CREATE TABLE system_settings (
-    key VARCHAR(100) PRIMARY KEY,
-    value JSONB NOT NULL,
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,  -- JSON形式の文字列
     description TEXT,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_by UUID REFERENCES users(id) ON DELETE SET NULL
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_by TEXT,
+    FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- 初期データ
@@ -275,24 +297,19 @@ notifications (1) ----< (*) notification_reads
 
 ### 初回セットアップ
 
-```sql
--- 1. データベース作成
-CREATE DATABASE simple_auth;
+SQLite3はファイルベースなので、データベースファイルを作成するだけです。
 
--- 2. ユーザー作成
-CREATE USER simple_auth_user WITH PASSWORD 'secure_password_here';
-GRANT ALL PRIVILEGES ON DATABASE simple_auth TO simple_auth_user;
+```bash
+# データベースファイルを作成
+touch simple_auth.db
 
--- 3. 拡張機能の有効化
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- 4. テーブル作成（上記のCREATE TABLE文を実行）
+# スキーマを適用
+sqlite3 simple_auth.db < migrations/001_initial_schema.sql
 ```
 
 ### マイグレーションツール
 
-- **golang-migrate** を使用
+- **golang-migrate** を使用（SQLite3対応）
 - マイグレーションファイルは `migrations/` ディレクトリに配置
 
 ```
@@ -302,6 +319,16 @@ migrations/
   000002_create_login_history_table.up.sql
   000002_create_login_history_table.down.sql
   ...
+```
+
+### マイグレーション実行
+
+```bash
+# アップ（最新まで適用）
+migrate -path ./migrations -database "sqlite3://simple_auth.db" up
+
+# ダウン（1つ戻す）
+migrate -path ./migrations -database "sqlite3://simple_auth.db" down 1
 ```
 
 ### ロールバック
@@ -315,20 +342,43 @@ migrations/
 ```bash
 #!/bin/bash
 DATE=$(date +%Y%m%d_%H%M%S)
-pg_dump -U simple_auth_user -h localhost simple_auth | gzip > backup_${DATE}.sql.gz
+
+# SQLite3データベースをバックアップ
+cp simple_auth.db backups/simple_auth_${DATE}.db
+
+# 圧縮（オプション）
+gzip backups/simple_auth_${DATE}.db
+```
+
+### オンラインバックアップ（推奨）
+
+SQLite3の `.backup` コマンドを使用すると、データベースをロックせずにバックアップできます。
+
+```bash
+#!/bin/bash
+DATE=$(date +%Y%m%d_%H%M%S)
+sqlite3 simple_auth.db ".backup backups/simple_auth_${DATE}.db"
+gzip backups/simple_auth_${DATE}.db
 ```
 
 ### リストアスクリプト
 
 ```bash
 #!/bin/bash
-gunzip -c backup_20251023_143000.sql.gz | psql -U simple_auth_user -h localhost simple_auth
+# バックアップファイルを解凍
+gunzip -c backups/simple_auth_20251023_143000.db.gz > simple_auth.db
 ```
 
 ### Redisのバックアップ
 
 - RDB または AOF を使用
 - 定期的にスナップショットを保存
+
+```bash
+# Redisのスナップショットを保存
+redis-cli SAVE
+cp /var/lib/redis/dump.rdb backups/redis_${DATE}.rdb
+```
 
 ## パフォーマンス最適化
 
@@ -337,101 +387,207 @@ gunzip -c backup_20251023_143000.sql.gz | psql -U simple_auth_user -h localhost 
 - 頻繁に検索されるカラムにインデックスを作成
 - 複合インデックスの検討（例: `(user_id, login_at)`）
 
-### 2. パーティショニング
-
-大量のログデータに対して、テーブルパーティショニングを検討：
-
 ```sql
--- login_history を月ごとにパーティション
-CREATE TABLE login_history (
-    ...
-) PARTITION BY RANGE (login_at);
-
-CREATE TABLE login_history_2025_10 PARTITION OF login_history
-    FOR VALUES FROM ('2025-10-01') TO ('2025-11-01');
-
-CREATE TABLE login_history_2025_11 PARTITION OF login_history
-    FOR VALUES FROM ('2025-11-01') TO ('2025-12-01');
+-- 複合インデックスの例
+CREATE INDEX idx_login_history_user_date ON login_history(user_id, login_at DESC);
 ```
 
-### 3. 定期的なVACUUM
+### 2. VACUUM
+
+SQLite3では、削除したデータの領域を再利用するために定期的にVACUUMを実行します。
 
 ```sql
--- 自動VACUUM の設定
-ALTER TABLE audit_logs SET (autovacuum_vacuum_scale_factor = 0.05);
+-- 手動VACUUM
+VACUUM;
+
+-- 自動VACUUM を有効化（データベース作成時）
+PRAGMA auto_vacuum = FULL;
 ```
 
-### 4. コネクションプーリング
+### 3. WAL（Write-Ahead Logging）モード
 
-- **PgBouncer** または **pgpool-II** の使用を検討
-- アプリケーション側でもコネクションプールを実装
+並行読み取りのパフォーマンスを向上させるため、WALモードを有効にします。
+
+```sql
+-- WALモードを有効化
+PRAGMA journal_mode = WAL;
+```
+
+WALモードのメリット:
+- 読み取りと書き込みがブロックしない
+- 書き込みが高速化
+- クラッシュ回復が容易
+
+### 4. その他の最適化
+
+```sql
+-- キャッシュサイズを増やす（デフォルトは2000ページ、1ページ=4KB）
+PRAGMA cache_size = -64000;  -- 64MBのキャッシュ
+
+-- 外部キー制約を有効化
+PRAGMA foreign_keys = ON;
+
+-- 同期モードを調整（パフォーマンス重視の場合）
+PRAGMA synchronous = NORMAL;  -- デフォルトはFULL
+```
 
 ## データ保持ポリシー
 
 ### login_history
 - 保持期間: 2年
-- 2年以上前のデータは削除またはアーカイブ
+- 2年以上前のデータは削除
+
+```sql
+-- 古いログイン履歴を削除（定期実行）
+DELETE FROM login_history
+WHERE login_at < datetime('now', '-2 years');
+```
 
 ### audit_logs
 - 保持期間: 5年（法令遵守のため）
-- 古いデータはアーカイブストレージに移動
+- 古いデータはアーカイブ（別のSQLiteファイルへエクスポート）
+
+```bash
+# 古いログをエクスポート
+sqlite3 simple_auth.db "
+  SELECT * FROM audit_logs
+  WHERE timestamp < datetime('now', '-5 years')
+" | sqlite3 archive_$(date +%Y).db
+```
 
 ### notifications
 - 有効期限（expires_at）を過ぎた通知は削除
 - 未設定の場合は作成から1年後に削除
 
-## セキュリティ
+```sql
+-- 期限切れの通知を削除
+DELETE FROM notifications
+WHERE expires_at < datetime('now')
+   OR (expires_at IS NULL AND created_at < datetime('now', '-1 year'));
+```
 
-### 1. データベースユーザーの権限
+## データ整合性
+
+### 外部キー制約
+
+SQLite3では、デフォルトで外部キー制約が無効です。アプリケーション起動時に有効化します。
 
 ```sql
--- アプリケーション用ユーザー（最小権限）
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO simple_auth_user;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO simple_auth_user;
-
--- 読み取り専用ユーザー（レポート用）
-CREATE USER simple_auth_readonly WITH PASSWORD 'readonly_password';
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO simple_auth_readonly;
+PRAGMA foreign_keys = ON;
 ```
 
-### 2. 行レベルセキュリティ（RLS）
+### トランザクション
+
+複数のテーブルを更新する場合は、トランザクションを使用します。
 
 ```sql
--- 一般ユーザーは自分のデータのみアクセス可能
-ALTER TABLE user_dashboards ENABLE ROW LEVEL SECURITY;
+BEGIN TRANSACTION;
 
-CREATE POLICY user_dashboards_policy ON user_dashboards
-    FOR ALL
-    TO simple_auth_user
-    USING (user_id = current_setting('app.current_user_id')::uuid);
-```
+-- 複数のSQL文
+INSERT INTO users ...;
+INSERT INTO audit_logs ...;
 
-### 3. SSL/TLS接続
-
-```
-# postgresql.conf
-ssl = on
-ssl_cert_file = '/path/to/server.crt'
-ssl_key_file = '/path/to/server.key'
-```
-
-```
-# pg_hba.conf
-hostssl all all 0.0.0.0/0 scram-sha-256
+COMMIT;
 ```
 
 ## モニタリング
 
 ### メトリクス
 
-- 接続数
-- クエリ実行時間
-- スロークエリ
-- テーブルサイズ
-- インデックスの使用状況
+- データベースファイルサイズ
+- クエリ実行時間（アプリケーション側でログ）
+- テーブルの行数
+
+```bash
+# データベースファイルサイズを確認
+ls -lh simple_auth.db
+
+# テーブルの行数を確認
+sqlite3 simple_auth.db "SELECT COUNT(*) FROM users;"
+```
+
+### クエリの最適化
+
+```sql
+-- EXPLAIN QUERY PLAN でクエリの実行計画を確認
+EXPLAIN QUERY PLAN
+SELECT * FROM login_history WHERE user_id = 'user_123' ORDER BY login_at DESC;
+```
 
 ### ツール
 
-- **pg_stat_statements** 拡張機能
-- **pgAdmin** または **pganalyze**
-- Prometheus + Grafana
+- **DB Browser for SQLite** - GUIでデータベースを管理
+- **sqlite-web** - Web UIでデータベースを管理
+- **Prometheus + Grafana** - アプリケーションメトリクスを可視化
+
+## セキュリティ
+
+### 1. ファイルパーミッション
+
+データベースファイルのパーミッションを適切に設定します。
+
+```bash
+# データベースファイルの所有者とパーミッションを設定
+chown app_user:app_group simple_auth.db
+chmod 600 simple_auth.db  # 所有者のみ読み書き可能
+```
+
+### 2. バックアップの暗号化
+
+バックアップファイルは暗号化して保存します。
+
+```bash
+#!/bin/bash
+DATE=$(date +%Y%m%d_%H%M%S)
+
+# バックアップして暗号化
+sqlite3 simple_auth.db ".backup backups/simple_auth_${DATE}.db"
+gpg --encrypt --recipient admin@example.com backups/simple_auth_${DATE}.db
+rm backups/simple_auth_${DATE}.db  # 平文のバックアップを削除
+```
+
+### 3. データベース暗号化（オプション）
+
+SQLite3のデータベース全体を暗号化する場合は、**SQLCipher** を使用します。
+
+```go
+import _ "github.com/mutecomm/go-sqlcipher/v4"
+
+db, err := sql.Open("sqlite3", "file:simple_auth.db?_key=your_encryption_key")
+```
+
+## UUID生成
+
+SQLite3にはUUID生成機能がないため、アプリケーション側で生成します。
+
+```go
+import "github.com/google/uuid"
+
+// UUIDを生成
+id := uuid.New().String()
+```
+
+## JSON操作
+
+SQLite3はJSON関数をサポートしているため、`details` カラムのJSON操作が可能です。
+
+```sql
+-- JSONから値を取得
+SELECT json_extract(details, '$.user_agent') FROM audit_logs;
+
+-- JSONで検索
+SELECT * FROM audit_logs
+WHERE json_extract(details, '$.action') = 'login_success';
+```
+
+## まとめ
+
+SQLite3は以下の特徴を持つため、この認証サーバーに最適です：
+
+✅ **シンプル**: サーバー不要、ファイルベース
+✅ **軽量**: 依存関係が少ない
+✅ **高速**: 小〜中規模なら十分なパフォーマンス
+✅ **バックアップが簡単**: ファイルコピーだけ
+✅ **デプロイが簡単**: 実行ファイルとDBファイルだけ
+
+並行書き込みの制限はありますが、認証サーバーは読み取りが多く、書き込みは少ないため問題になりません。

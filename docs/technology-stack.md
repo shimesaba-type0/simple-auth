@@ -28,7 +28,7 @@ simple-auth の実装に使用する技術スタックの詳細です。
 - **データベース**: [GORM](https://gorm.io/)
   - ORM（Object-Relational Mapping）
   - マイグレーション機能
-  - PostgreSQL対応
+  - SQLite3対応
 
 - **Redis クライアント**: [go-redis](https://github.com/redis/go-redis)
   - 高速なRedisクライアント
@@ -131,14 +131,22 @@ simple-auth/
 
 ## データベース
 
-### PostgreSQL
+### SQLite3
 
-- バージョン: 14以上
+- バージョン: 3.35以上（JSON関数サポート）
 - 理由:
-  - 信頼性が高い
-  - ACID準拠
-  - JSONBサポート（audit_logsのdetailsカラムで使用）
-  - 豊富な拡張機能（uuid-ossp, pgcryptoなど）
+  - **セットアップが簡単**: ファイルベース、サーバー不要
+  - **依存関係が少ない**: デプロイが容易
+  - **バックアップが簡単**: ファイルコピーだけ
+  - **軽量**: 実行ファイルとDBファイルだけで動作
+  - **ACID準拠**: トランザクションサポート
+  - **十分なパフォーマンス**: 小〜中規模（数千ユーザー）まで対応可能
+  - **JSON関数サポート**: audit_logsのdetailsカラムで使用
+
+- 推奨設定:
+  - **WALモード**: 並行読み取りのパフォーマンス向上
+  - **外部キー制約**: データ整合性を保証
+  - **PRAGMA設定**: キャッシュサイズ、同期モードなどの最適化
 
 ### Redis
 
@@ -182,9 +190,8 @@ SPA（Single Page Application）として実装する場合：
 ### 開発環境
 
 - **Docker Compose**
-  - PostgreSQL コンテナ
   - Redis コンテナ
-  - アプリケーション コンテナ
+  - アプリケーション コンテナ（SQLite3はファイルベース）
   - nginx コンテナ（auth_requestのテスト用）
 
 ### 本番環境
@@ -194,7 +201,7 @@ SPA（Single Page Application）として実装する場合：
 - **OS**: Ubuntu 22.04 LTS または Rocky Linux 9
 - **Webサーバー**: nginx
 - **アプリケーション**: systemdでサービス化
-- **データベース**: PostgreSQL（同じサーバーまたは別サーバー）
+- **データベース**: SQLite3（ファイルベース、アプリケーションと同じサーバー）
 - **Redis**: Redis（同じサーバーまたは別サーバー）
 - **リバースプロキシ**: nginx
 - **SSL/TLS**: Let's Encrypt（certbot）
@@ -203,24 +210,24 @@ SPA（Single Page Application）として実装する場合：
 
 - **Kubernetes** または **Docker Swarm**
 - **ロードバランサー**: nginx Ingress Controller
-- **永続化ストレージ**: PersistentVolume（PostgreSQL, Redisデータ用）
+- **永続化ストレージ**: PersistentVolume（SQLite3 DBファイル, Redisデータ用）
 
 #### オプション3: クラウド
 
 - **AWS**:
-  - EC2（アプリケーション）
-  - RDS for PostgreSQL
+  - EC2（アプリケーション + SQLite3）
   - ElastiCache for Redis
   - Application Load Balancer
   - Route 53（DNS）
   - ACM（SSL証明書）
+  - EBS（SQLite3 DBファイルの永続化）
 
 - **GCP**:
-  - Compute Engine（アプリケーション）
-  - Cloud SQL for PostgreSQL
+  - Compute Engine（アプリケーション + SQLite3）
   - Memorystore for Redis
   - Cloud Load Balancing
   - Cloud DNS
+  - Persistent Disk（SQLite3 DBファイルの永続化）
 
 ## CI/CD
 
@@ -274,7 +281,7 @@ jobs:
 
 - **アプリケーションログ**: zap（構造化ログ、JSON形式）
 - **nginxアクセスログ**: `/var/log/nginx/access.log`
-- **PostgreSQLログ**: `/var/log/postgresql/`
+- **SQLite3**: 必要に応じてクエリログをアプリケーション側で記録
 
 ### メトリクス
 
@@ -284,9 +291,9 @@ jobs:
   - Redisメトリクス（メモリ使用量、ヒット率）
 
 - **Exporter**:
-  - [postgres_exporter](https://github.com/prometheus-community/postgres_exporter)
   - [redis_exporter](https://github.com/oliver006/redis_exporter)
   - カスタムメトリクス（Go アプリケーション内で Prometheus クライアントライブラリを使用）
+    - SQLite3のメトリクス（DBファイルサイズ、クエリ実行時間など）
 
 ### アラート
 

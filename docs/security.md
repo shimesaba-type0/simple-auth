@@ -33,9 +33,20 @@ $argon2id$v=19$m=65536,t=3,p=4$base64_encoded_salt$base64_encoded_hash
 - 暗号学的に安全な乱数生成器を使用（`crypto/rand`）
 
 #### 保存方法
-- Redisに保存
+
+**デフォルト構成（SQLite3）:**
+- `otps` テーブルに保存
+- 有効期限を `expires_at` カラムで管理
+- 定期的に期限切れOTPを削除
+
+```sql
+INSERT OR REPLACE INTO otps (user_id, otp, attempts, expires_at)
+VALUES (?, ?, 0, datetime('now', '+10 minutes'));
+```
+
+**大規模環境（Redis）:**
 - キー: `otp:{user_id}`
-- TTL: 10分
+- TTL: 10分（自動削除）
 - 値:
   ```json
   {
@@ -62,9 +73,20 @@ $argon2id$v=19$m=65536,t=3,p=4$base64_encoded_salt$base64_encoded_hash
 - 暗号学的に安全な乱数生成器を使用
 
 #### セッション保存
-- Redisに保存
+
+**デフォルト構成（SQLite3）:**
+- `sessions` テーブルに保存
+- 有効期限を `expires_at` カラムで管理
+- 定期的に期限切れセッションを削除
+
+```sql
+INSERT INTO sessions (session_id, user_id, email, role, expires_at, ip_address, user_agent)
+VALUES (?, ?, ?, ?, datetime('now', '+24 hours'), ?, ?);
+```
+
+**大規模環境（Redis - オプション）:**
 - キー: `session:{session_id}`
-- TTL: 24時間（セッション有効期限）
+- TTL: 24時間（自動削除）
 - 値:
   ```json
   {
@@ -77,6 +99,10 @@ $argon2id$v=19$m=65536,t=3,p=4$base64_encoded_salt$base64_encoded_hash
     "user_agent": "Mozilla/5.0..."
   }
   ```
+
+**選択基準:**
+- 〜500ユーザー: SQLite3で十分
+- 500+ユーザー: Redisで高速化を検討
 
 #### Cookie設定
 - 名前: `auth_session`

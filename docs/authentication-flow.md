@@ -31,7 +31,7 @@
     ↓ (成功)
 [セッション確立]
  - セッションCookie発行（HttpOnly, Secure, SameSite=Lax）
- - Redisにセッション情報を保存
+ - データベースにセッション情報を保存（SQLite3 または Redis）
     ↓
 [ダッシュボードへリダイレクト]
  または
@@ -87,7 +87,12 @@ POST /api/auth/login/passphrase
 
 4. OTP生成と送信
    - 6桁のランダムなOTPを生成
-   - Redisに保存（有効期限: 10分）
+   - データベース（SQLite3）に保存（有効期限: 10分）
+     ```sql
+     INSERT OR REPLACE INTO otps (user_id, otp, expires_at)
+     VALUES (?, ?, datetime('now', '+10 minutes'));
+     ```
+   - ※大規模環境ではRedisでTTL自動管理も可能
    - メール送信
 
 ## 第2段階: OTP認証
@@ -125,23 +130,19 @@ POST /api/auth/login/otp
 ### 処理内容
 
 1. OTPの検証
-   - Redisから保存されたOTPを取得
+   - データベース（SQLite3）から保存されたOTPを取得
    - 入力されたOTPと比較
    - 有効期限チェック
+   - ※大規模環境ではRedisを使用可能
 
 2. セッション確立
    - ランダムなセッションIDを生成
-   - Redisにセッション情報を保存
-     ```json
-     {
-       "user_id": "user_123",
-       "email": "user@example.com",
-       "role": "user",
-       "login_at": "2025-10-23T14:30:00Z",
-       "ip_address": "192.168.1.1",
-       "user_agent": "Mozilla/5.0..."
-     }
+   - データベース（SQLite3）にセッション情報を保存
+     ```sql
+     INSERT INTO sessions (session_id, user_id, email, role, expires_at, ip_address, user_agent)
+     VALUES (?, ?, ?, ?, datetime('now', '+24 hours'), ?, ?);
      ```
+   - ※大規模環境ではRedisでセッション管理も可能
    - セッションCookieを発行
      - 名前: `auth_session`
      - HttpOnly: true
@@ -167,7 +168,7 @@ POST /api/auth/login/otp
     ↓
 [認証サーバー: GET /api/auth/verify]
  - セッションCookieをチェック
- - Redisからセッション情報を取得
+ - データベースからセッション情報を取得（SQLite3 または Redis）
     ↓
 [認証済み?]
  Yes → 200 OK（nginxがリクエストを通す）
@@ -205,7 +206,10 @@ POST /api/auth/logout
 ### 処理内容
 
 1. セッションCookieから セッションID を取得
-2. Redisからセッション情報を削除
+2. データベースからセッション情報を削除（SQLite3 または Redis）
+   ```sql
+   DELETE FROM sessions WHERE session_id = ?;
+   ```
 3. セッションCookieを削除（Max-Age=0）
 4. ログアウトを監査ログに記録
 

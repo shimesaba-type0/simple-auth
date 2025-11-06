@@ -195,7 +195,106 @@ INSERT INTO system_settings (key, value, description) VALUES
     ('security.rate_limit_per_minute', '10', '1分あたりのレート制限');
 ```
 
-## Redis データ構造
+### 8. sessions テーブル（セッション管理）
+
+**デフォルト構成ではSQLite3でセッションを管理します。**
+
+```sql
+CREATE TABLE sessions (
+    session_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,  -- セッション有効期限（24時間後）
+    ip_address TEXT,
+    user_agent TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- インデックス
+CREATE INDEX idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
+```
+
+#### 期限切れセッションの削除
+
+定期的に実行（1時間ごと）：
+```sql
+DELETE FROM sessions WHERE expires_at < datetime('now');
+```
+
+### 9. otps テーブル（OTP管理）
+
+**デフォルト構成ではSQLite3でOTPを管理します。**
+
+```sql
+CREATE TABLE otps (
+    user_id TEXT PRIMARY KEY,
+    otp TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,  -- OTP有効期限（10分後）
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- インデックス
+CREATE INDEX idx_otps_expires_at ON otps(expires_at);
+```
+
+#### 期限切れOTPの削除
+
+定期的に実行（10分ごと）：
+```sql
+DELETE FROM otps WHERE expires_at < datetime('now');
+```
+
+### 10. fail_locks テーブル（fail lock管理）
+
+**デフォルト構成ではSQLite3でfail lockを管理します。**
+
+```sql
+CREATE TABLE fail_locks (
+    user_id TEXT PRIMARY KEY,
+    failed_attempts TEXT NOT NULL,  -- JSON配列 ["2025-10-23T14:30:00Z", ...]
+    locked_until TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- インデックス
+CREATE INDEX idx_fail_locks_locked_until ON fail_locks(locked_until);
+```
+
+#### 期限切れロックの削除
+
+定期的に実行（1時間ごと）：
+```sql
+DELETE FROM fail_locks WHERE locked_until < datetime('now');
+```
+
+---
+
+## Redis データ構造（オプション）
+
+**大規模環境（500+同時ユーザー）では、パフォーマンス向上のためRedisの使用を推奨します。**
+
+### Redis使用時のメリット
+- ✅ auth_requestが超高速（1-5ms）
+- ✅ TTL自動管理（期限切れデータが自動削除）
+- ✅ セッション書き込みの並行性向上
+
+### Redis使用時のデメリット
+- ❌ Redisサーバーの運用が必要
+- ❌ 学習コスト（Redis知識）
+- ❌ Docker構成が複雑化
+
+### 実装の選択
+- **小〜中規模（〜500ユーザー）**: SQLite3のみ
+- **大規模（500+ユーザー）**: SQLite3 + Redis
+
+---
+
+## Redisデータ構造（オプション使用時）
 
 ### 1. セッション情報
 

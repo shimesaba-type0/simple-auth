@@ -4,6 +4,27 @@
 
 nginx の `auth_request` ディレクティブを使用して、認証サーバーと連携します。
 
+## アーキテクチャ：SSO（Single Sign-On）
+
+この認証サーバーは、**1回のログインで複数のバックエンドサービスにアクセスできるSSO方式**を採用しています。
+
+```
+[ユーザー]
+    ↓
+[nginx]
+    ├→ /login, /dashboard → [認証サーバー]
+    │                           ↓ (セッション管理)
+    ├→ /service-a/* → [auth_request] → [バックエンドサービスA]
+    ├→ /service-b/* → [auth_request] → [バックエンドサービスB]
+    └→ /service-c/* → [auth_request] → [バックエンドサービスC]
+```
+
+### メリット
+✅ **1回のログインで全サービスにアクセス** - ユーザーは認証サーバーに1回だけログイン
+✅ **一元管理** - ユーザー管理、監査ログが1箇所に集約
+✅ **疎結合** - バックエンドサービスは認証ロジックを持たない
+✅ **スケーラブル** - サービスを追加してもnginx設定を増やすだけ
+
 ## nginx の設定例
 
 ### 基本設定
@@ -73,52 +94,140 @@ location /admin {
 }
 ```
 
-### 複数のバックエンドを保護する場合
+### SSO：複数のバックエンドサービスを保護する（推奨）
+
+**この方式では、ユーザーは1回ログインするだけで、すべてのサービスにアクセスできます。**
 
 ```nginx
-# バックエンドA
-location /app-a/ {
-    auth_request /auth/verify;
-    error_page 401 = @error401;
-
-    proxy_pass http://backend_app_a;
-    auth_request_set $auth_user $upstream_http_x_auth_user;
-    proxy_set_header X-Auth-User $auth_user;
+# アップストリーム定義
+upstream auth_backend {
+    server auth-server:3000;
+    keepalive 32;
 }
 
-# バックエンドB
-location /app-b/ {
-    auth_request /auth/verify;
-    error_page 401 = @error401;
-
-    proxy_pass http://backend_app_b;
-    auth_request_set $auth_user $upstream_http_x_auth_user;
-    proxy_set_header X-Auth-User $auth_user;
+upstream backend_service_a {
+    server service-a:8000;
 }
 
-# 管理者のみアクセス可能なバックエンドC
-location /admin-app/ {
+upstream backend_service_b {
+    server service-b:8001;
+}
+
+upstream backend_service_c {
+    server service-c:8002;
+}
+
+# 認証エンドポイント（全サービス共通）
+location = /auth/verify {
+    internal;
+    proxy_pass http://auth_backend/api/auth/verify;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_pass_header Cookie;
+}
+
+# 認証サーバー自体（ログイン、ダッシュボード、管理画面）
+location / {
+    proxy_pass http://auth_backend;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# バックエンドサービスA
+location /service-a/ {
     auth_request /auth/verify;
     error_page 401 = @error401;
-    error_page 403 = @error403;
 
-    # 認証サーバーから返されたロールをチェック
+    # 認証情報をヘッダーで渡す
+    auth_request_set $auth_user $upstream_http_x_auth_user;
     auth_request_set $auth_role $upstream_http_x_auth_role;
+    auth_request_set $auth_user_id $upstream_http_x_auth_user_id;
 
-    # adminロール以外は403
+    proxy_pass http://backend_service_a/;
+    proxy_set_header X-Auth-User $auth_user;
+    proxy_set_header X-Auth-Role $auth_role;
+    proxy_set_header X-Auth-User-ID $auth_user_id;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+# バックエンドサービスB
+location /service-b/ {
+    auth_request /auth/verify;
+    error_page 401 = @error401;
+
+    auth_request_set $auth_user $upstream_http_x_auth_user;
+    auth_request_set $auth_role $upstream_http_x_auth_role;
+    auth_request_set $auth_user_id $upstream_http_x_auth_user_id;
+
+    proxy_pass http://backend_service_b/;
+    proxy_set_header X-Auth-User $auth_user;
+    proxy_set_header X-Auth-Role $auth_role;
+    proxy_set_header X-Auth-User-ID $auth_user_id;
+}
+
+# バックエンドサービスC（管理者専用）
+location /service-c/ {
+    auth_request /auth/verify;
+    error_page 401 = @error401;
+
+    # 認証情報を取得
+    auth_request_set $auth_user $upstream_http_x_auth_user;
+    auth_request_set $auth_role $upstream_http_x_auth_role;
+    auth_request_set $auth_user_id $upstream_http_x_auth_user_id;
+
+    # adminロールのみアクセス可能
     if ($auth_role != "admin") {
         return 403;
     }
 
-    proxy_pass http://backend_app_c;
+    proxy_pass http://backend_service_c/;
     proxy_set_header X-Auth-User $auth_user;
     proxy_set_header X-Auth-Role $auth_role;
+    proxy_set_header X-Auth-User-ID $auth_user_id;
 }
 
-location @error403 {
-    return 302 https://$host/dashboard?error=forbidden;
+# 未認証時のリダイレクト
+location @error401 {
+    return 302 /login?redirect=$request_uri;
 }
 ```
+
+### ユーザーフロー
+
+1. **初回アクセス**
+   ```
+   ユーザー → /service-a/ にアクセス
+      ↓ (未認証)
+   /login にリダイレクト
+      ↓
+   パスフレーズ + OTP 入力
+      ↓ (認証成功、セッション確立)
+   /service-a/ にリダイレクト
+      ↓
+   サービスA表示
+   ```
+
+2. **他のサービスへのアクセス（SSO）**
+   ```
+   ユーザー → /service-b/ にアクセス
+      ↓ (セッションCookieが既にある)
+   auth_request → 認証OK
+      ↓
+   サービスB表示（ログイン不要！）
+   ```
+
+3. **ダッシュボード経由**
+   ```
+   ユーザー → /dashboard にアクセス
+      ↓
+   サービス一覧を表示
+      ├→ [サービスA] クリック → /service-a/ へ（ログイン不要）
+      ├→ [サービスB] クリック → /service-b/ へ（ログイン不要）
+      └→ [サービスC] クリック → /service-c/ へ（ログイン不要）
+   ```
 
 ## 認証サーバー側の実装
 

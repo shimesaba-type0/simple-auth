@@ -380,7 +380,199 @@ DELETE /api/admin/notifications/:notification_id
 }
 ```
 
-## 3. システム監視
+## 3. 招待リンク管理
+
+管理者は招待リンクを作成・管理し、新規ユーザーの登録を制御できます。
+
+### 3.1 招待リンク作成
+
+#### エンドポイント
+```
+POST /api/admin/invitations
+```
+
+#### リクエスト
+```json
+{
+  "max_uses": 10,
+  "expires_in_days": 7,
+  "description": "2025年10月新入社員"
+}
+```
+
+#### パラメータ
+- `max_uses`: 最大使用回数（デフォルト: 1）
+- `expires_in_days`: 有効期限（日数、デフォルト: 7）
+- `description`: 管理用メモ（オプション）
+
+#### レスポンス
+```json
+{
+  "success": true,
+  "data": {
+    "token": "abc123def456ghi789jkl012",
+    "invitation_url": "https://auth.example.com/invite?token=abc123def456ghi789jkl012",
+    "max_uses": 10,
+    "used_count": 0,
+    "description": "2025年10月新入社員",
+    "created_at": "2025-10-23T10:00:00Z",
+    "expires_at": "2025-10-30T10:00:00Z"
+  },
+  "message": "招待リンクを作成しました"
+}
+```
+
+#### 処理内容
+1. ランダムなトークン生成（128ビット）
+2. 招待レコードをデータベースに保存
+3. 招待URLを生成
+4. 監査ログに記録
+
+### 3.2 招待リンク一覧取得
+
+#### エンドポイント
+```
+GET /api/admin/invitations?status=all&limit=50&offset=0
+```
+
+#### パラメータ
+- `status`: `all` / `active` / `expired` / `exhausted` (デフォルト: `active`)
+- `limit`: 取得件数（最大100、デフォルト: 50）
+- `offset`: オフセット
+
+#### レスポンス
+```json
+{
+  "success": true,
+  "data": {
+    "total": 15,
+    "invitations": [
+      {
+        "token": "abc123...",
+        "invitation_url": "https://auth.example.com/invite?token=abc123",
+        "max_uses": 10,
+        "used_count": 7,
+        "remaining_uses": 3,
+        "description": "2025年10月新入社員",
+        "created_by": "admin@example.com",
+        "created_at": "2025-10-23T10:00:00Z",
+        "expires_at": "2025-10-30T10:00:00Z",
+        "status": "active"
+      },
+      {
+        "token": "def456...",
+        "max_uses": 1,
+        "used_count": 1,
+        "status": "exhausted"
+      },
+      {
+        "token": "ghi789...",
+        "max_uses": 5,
+        "used_count": 2,
+        "expires_at": "2025-10-22T10:00:00Z",
+        "status": "expired"
+      }
+    ]
+  }
+}
+```
+
+#### ステータス
+- `active`: 有効（期限内 & 使用回数に余裕あり）
+- `expired`: 期限切れ
+- `exhausted`: 使用回数上限に達した
+
+### 3.3 招待リンク詳細取得
+
+#### エンドポイント
+```
+GET /api/admin/invitations/:token
+```
+
+#### レスポンス
+```json
+{
+  "success": true,
+  "data": {
+    "token": "abc123...",
+    "invitation_url": "https://auth.example.com/invite?token=abc123",
+    "max_uses": 10,
+    "used_count": 7,
+    "remaining_uses": 3,
+    "description": "2025年10月新入社員",
+    "created_by": "admin@example.com",
+    "created_at": "2025-10-23T10:00:00Z",
+    "expires_at": "2025-10-30T10:00:00Z",
+    "status": "active",
+    "users": [
+      {
+        "user_id": "user_123",
+        "email": "user1@example.com",
+        "registered_at": "2025-10-23T11:00:00Z"
+      },
+      {
+        "user_id": "user_124",
+        "email": "user2@example.com",
+        "registered_at": "2025-10-23T12:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+### 3.4 招待リンク無効化
+
+#### エンドポイント
+```
+DELETE /api/admin/invitations/:token
+```
+
+#### リクエスト
+```json
+{
+  "reason": "誤って作成したため"
+}
+```
+
+#### レスポンス
+```json
+{
+  "success": true,
+  "message": "招待リンクを無効化しました"
+}
+```
+
+#### 処理内容
+- 招待レコードを削除（または無効化フラグを設定）
+- 監査ログに記録
+
+### 3.5 招待リンクからの登録履歴
+
+#### エンドポイント
+```
+GET /api/admin/invitations/:token/users
+```
+
+#### レスポンス
+```json
+{
+  "success": true,
+  "data": {
+    "total": 7,
+    "users": [
+      {
+        "user_id": "user_123",
+        "email": "user1@example.com",
+        "display_name": "山田太郎",
+        "registered_at": "2025-10-23T11:00:00Z",
+        "last_login": "2025-10-24T09:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+## 4. システム監視
 
 ### 3.1 ダッシュボード概要
 

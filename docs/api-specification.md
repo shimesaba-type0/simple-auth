@@ -67,7 +67,52 @@ X-CSRF-Token: {csrf_token}  # POST/PUT/DELETE時のみ必須（ログイン除�
 
 ## 認証API
 
-### 1. パスフレーズ認証（第1段階）
+### 1. ユーザー登録（招待制）
+
+```
+POST /api/auth/register
+```
+
+#### リクエスト
+```json
+{
+  "invitation_token": "abc123def456ghi789jkl012",
+  "email": "user@example.com"
+}
+```
+
+#### レスポンス（成功）
+```json
+{
+  "success": true,
+  "data": {
+    "user_id": "user_123",
+    "email": "user@example.com",
+    "passphrase": "a3K9pL2qR8sT4vX7yZ1bC5dF6gH9jM2nP4rS8tV1wX3zA6bD9eG2hJ5kN7mQ1rT9v"
+  },
+  "message": "アカウントが作成されました。パスフレーズを保存してください。"
+}
+```
+
+⚠️ **重要**: パスフレーズは登録時に1回だけ表示されます。必ずパスワードマネージャーに保存してください。
+
+#### レスポンス（エラー）
+```json
+{
+  "success": false,
+  "error": "invalid_invitation",
+  "message": "招待リンクが無効です"
+}
+```
+
+#### エラーコード
+- `invalid_invitation`: トークンが存在しない
+- `invitation_expired`: 招待リンクの有効期限切れ
+- `invitation_exhausted`: 使用回数上限に達している
+- `invitation_revoked`: 招待リンクが無効化されている
+- `email_already_exists`: メールアドレスが既に登録されている
+
+### 2. パスフレーズ認証（第1段階）
 
 ```
 POST /api/auth/login/passphrase
@@ -109,7 +154,7 @@ POST /api/auth/login/passphrase
 }
 ```
 
-### 2. OTP認証（第2段階）
+### 3. OTP認証（第2段階）
 
 ```
 POST /api/auth/login/otp
@@ -144,7 +189,7 @@ POST /api/auth/login/otp
 }
 ```
 
-### 3. セッション検証（nginx auth_request用）
+### 4. セッション検証（nginx auth_request用）
 
 ```
 GET /api/auth/verify
@@ -164,7 +209,7 @@ HTTP/1.1 401 Unauthorized
 X-Auth-Redirect: /login?redirect=/protected/resource
 ```
 
-### 4. ログアウト
+### 5. ログアウト
 
 ```
 POST /api/auth/logout
@@ -178,7 +223,7 @@ POST /api/auth/logout
 }
 ```
 
-### 5. 現在のユーザー情報取得
+### 6. 現在のユーザー情報取得
 
 ```
 GET /api/auth/me
@@ -799,6 +844,194 @@ PUT /api/admin/settings/security
 {
   "success": true,
   "message": "セキュリティ設定を更新しました"
+}
+```
+
+### 18. 招待リンク作成
+
+```
+POST /api/admin/invitations
+```
+
+#### リクエスト
+```json
+{
+  "max_uses": 10,
+  "expires_in_days": 7,
+  "description": "2025年10月新入社員"
+}
+```
+
+#### パラメータ
+- `max_uses`: 最大使用回数（デフォルト: 1）
+- `expires_in_days`: 有効期限（日数、デフォルト: 7）
+- `description`: 招待リンクの説明（オプション）
+
+#### レスポンス
+```json
+{
+  "success": true,
+  "data": {
+    "token": "abc123def456ghi789jkl012",
+    "invitation_url": "https://auth.example.com/invite?token=abc123def456ghi789jkl012",
+    "max_uses": 10,
+    "used_count": 0,
+    "expires_at": "2025-10-30T14:30:00Z",
+    "description": "2025年10月新入社員"
+  },
+  "message": "招待リンクを作成しました"
+}
+```
+
+### 19. 招待リンク一覧取得
+
+```
+GET /api/admin/invitations?limit=50&offset=0&status=all
+```
+
+#### パラメータ
+- `limit`: 取得件数（最大100、デフォルト: 50）
+- `offset`: オフセット（デフォルト: 0）
+- `status`: `all` | `active` | `expired` | `exhausted` | `revoked` (デフォルト: `all`)
+
+#### レスポンス
+```json
+{
+  "success": true,
+  "data": {
+    "total": 25,
+    "invitations": [
+      {
+        "token": "abc123def456ghi789jkl012",
+        "invitation_url": "https://auth.example.com/invite?token=abc123def456ghi789jkl012",
+        "max_uses": 10,
+        "used_count": 3,
+        "description": "2025年10月新入社員",
+        "created_by_email": "admin@example.com",
+        "created_at": "2025-10-23T14:30:00Z",
+        "expires_at": "2025-10-30T14:30:00Z",
+        "revoked": false,
+        "status": "active"
+      },
+      {
+        "token": "xyz789abc456def123ghi012",
+        "invitation_url": "https://auth.example.com/invite?token=xyz789abc456def123ghi012",
+        "max_uses": 5,
+        "used_count": 5,
+        "description": "マーケティングチーム",
+        "created_by_email": "admin@example.com",
+        "created_at": "2025-10-20T10:00:00Z",
+        "expires_at": "2025-10-27T10:00:00Z",
+        "revoked": false,
+        "status": "exhausted"
+      }
+    ]
+  }
+}
+```
+
+#### ステータス説明
+- `active`: 有効で使用可能
+- `expired`: 有効期限切れ
+- `exhausted`: 使用回数上限に達した
+- `revoked`: 管理者によって無効化された
+
+### 20. 招待リンク詳細取得
+
+```
+GET /api/admin/invitations/:token
+```
+
+#### レスポンス
+```json
+{
+  "success": true,
+  "data": {
+    "token": "abc123def456ghi789jkl012",
+    "invitation_url": "https://auth.example.com/invite?token=abc123def456ghi789jkl012",
+    "max_uses": 10,
+    "used_count": 3,
+    "description": "2025年10月新入社員",
+    "created_by": "admin_123",
+    "created_by_email": "admin@example.com",
+    "created_at": "2025-10-23T14:30:00Z",
+    "expires_at": "2025-10-30T14:30:00Z",
+    "revoked": false,
+    "revoked_at": null,
+    "revoked_by": null,
+    "status": "active",
+    "recent_uses": [
+      {
+        "user_id": "user_123",
+        "email": "user1@example.com",
+        "used_at": "2025-10-23T15:00:00Z"
+      },
+      {
+        "user_id": "user_124",
+        "email": "user2@example.com",
+        "used_at": "2025-10-24T09:30:00Z"
+      }
+    ]
+  }
+}
+```
+
+### 21. 招待リンク無効化
+
+```
+POST /api/admin/invitations/:token/revoke
+```
+
+#### リクエスト
+```json
+{
+  "reason": "不要になったため"
+}
+```
+
+#### レスポンス
+```json
+{
+  "success": true,
+  "message": "招待リンクを無効化しました"
+}
+```
+
+### 22. 招待リンクからの登録ユーザー一覧
+
+```
+GET /api/admin/invitations/:token/users?limit=50&offset=0
+```
+
+#### パラメータ
+- `limit`: 取得件数（最大100、デフォルト: 50）
+- `offset`: オフセット（デフォルト: 0）
+
+#### レスポンス
+```json
+{
+  "success": true,
+  "data": {
+    "total": 3,
+    "users": [
+      {
+        "user_id": "user_123",
+        "email": "user1@example.com",
+        "display_name": "User 1",
+        "registered_at": "2025-10-23T15:00:00Z",
+        "last_login": "2025-10-24T10:00:00Z",
+        "status": "active"
+      },
+      {
+        "user_id": "user_124",
+        "email": "user2@example.com",
+        "display_name": "User 2",
+        "registered_at": "2025-10-24T09:30:00Z",
+        "last_login": "2025-10-24T11:00:00Z",
+        "status": "active"
+      }
+    ]
+  }
 }
 ```
 

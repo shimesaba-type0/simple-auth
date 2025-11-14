@@ -144,7 +144,55 @@ CREATE TABLE user_dashboards (
 CREATE INDEX idx_user_dashboards_user_id ON user_dashboards(user_id);
 ```
 
-### 6. audit_logs テーブル
+### 6. invitations テーブル
+
+招待リンク情報を保存します。
+
+```sql
+CREATE TABLE invitations (
+    token TEXT PRIMARY KEY,  -- 招待トークン（ランダムな文字列、24文字以上）
+    created_by TEXT NOT NULL,  -- 作成した管理者のID
+    max_uses INTEGER NOT NULL DEFAULT 1,  -- 最大使用回数
+    used_count INTEGER NOT NULL DEFAULT 0,  -- 現在の使用回数
+    description TEXT,  -- 招待リンクの説明（例: "2025年10月新入社員"）
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,  -- 有効期限
+    revoked INTEGER NOT NULL DEFAULT 0,  -- 無効化フラグ (0=有効, 1=無効)
+    revoked_at TEXT,  -- 無効化された日時
+    revoked_by TEXT,  -- 無効化した管理者のID
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (revoked_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- インデックス
+CREATE INDEX idx_invitations_created_by ON invitations(created_by);
+CREATE INDEX idx_invitations_expires_at ON invitations(expires_at);
+CREATE INDEX idx_invitations_revoked ON invitations(revoked);
+```
+
+### 7. invitation_uses テーブル
+
+招待リンクの使用履歴を保存します。
+
+```sql
+CREATE TABLE invitation_uses (
+    id TEXT PRIMARY KEY,  -- UUID
+    invitation_token TEXT NOT NULL,  -- 使用された招待トークン
+    user_id TEXT NOT NULL,  -- 登録されたユーザーのID
+    used_at TEXT NOT NULL DEFAULT (datetime('now')),  -- 使用日時
+    ip_address TEXT,  -- 登録時のIPアドレス
+    user_agent TEXT,  -- 登録時のUser-Agent
+    FOREIGN KEY (invitation_token) REFERENCES invitations(token) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- インデックス
+CREATE INDEX idx_invitation_uses_invitation_token ON invitation_uses(invitation_token);
+CREATE INDEX idx_invitation_uses_user_id ON invitation_uses(user_id);
+CREATE INDEX idx_invitation_uses_used_at ON invitation_uses(used_at DESC);
+```
+
+### 8. audit_logs テーブル
 
 監査ログを保存します。
 
@@ -171,7 +219,7 @@ CREATE INDEX idx_audit_logs_actor_id ON audit_logs(actor_id);
 CREATE INDEX idx_audit_logs_target_id ON audit_logs(target_id);
 ```
 
-### 7. system_settings テーブル
+### 9. system_settings テーブル
 
 システム設定を保存します。
 
@@ -195,7 +243,7 @@ INSERT INTO system_settings (key, value, description) VALUES
     ('security.rate_limit_per_minute', '10', '1分あたりのレート制限');
 ```
 
-### 8. sessions テーブル（セッション管理）
+### 10. sessions テーブル（セッション管理）
 
 **デフォルト構成ではSQLite3でセッションを管理します。**
 
@@ -224,7 +272,7 @@ CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 DELETE FROM sessions WHERE expires_at < datetime('now');
 ```
 
-### 9. otps テーブル（OTP管理）
+### 11. otps テーブル（OTP管理）
 
 **デフォルト構成ではSQLite3でOTPを管理します。**
 
@@ -249,7 +297,7 @@ CREATE INDEX idx_otps_expires_at ON otps(expires_at);
 DELETE FROM otps WHERE expires_at < datetime('now');
 ```
 
-### 10. fail_locks テーブル（fail lock管理）
+### 12. fail_locks テーブル（fail lock管理）
 
 **デフォルト構成ではSQLite3でfail lockを管理します。**
 
@@ -385,11 +433,17 @@ users (1) ----< (*) login_history
   |
   +----< (1) user_dashboards
   |
+  +----< (*) invitations (created_by)
+  |
+  +----< (*) invitation_uses (user_id)
+  |
   +----< (*) audit_logs (actor_id)
   |
   +----< (*) system_settings (updated_by)
 
 notifications (1) ----< (*) notification_reads
+
+invitations (1) ----< (*) invitation_uses
 ```
 
 ## マイグレーション戦略

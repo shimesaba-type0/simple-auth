@@ -139,7 +139,20 @@ VALUES (?, ?, ?, ?, datetime('now', '+24 hours'), ?, ?);
 2. 管理者による手動解除
 
 #### 実装
-- Redisに失敗回数を保存
+
+**デフォルト構成（SQLite3）:**
+- `fail_locks` テーブルに保存
+- カラム:
+  - `failed_attempts`: JSON配列（タイムスタンプのリスト）
+  - `locked_until`: ロック解除時刻
+- 定期的に期限切れロックを削除
+
+```sql
+INSERT OR REPLACE INTO fail_locks (user_id, failed_attempts, locked_until)
+VALUES (?, '["2025-10-23T14:30:00Z", "2025-10-23T14:35:00Z"]', datetime('now', '+6 hours'));
+```
+
+**大規模環境（Redis - オプション）:**
 - キー: `fail_lock:{user_id}`
 - 値:
   ```json
@@ -153,6 +166,10 @@ VALUES (?, ?, ?, ?, datetime('now', '+24 hours'), ?, ?);
   }
   ```
 - TTL: ロック期間 + 2時間（履歴保持のため）
+
+**選択基準:**
+- 〜500ユーザー: SQLite3で十分
+- 500+ユーザー: Redisで高速化を検討
 
 #### ロック時の通知
 - ユーザーにメールで通知

@@ -94,7 +94,7 @@ POST /api/admin/users
   "email": "newuser@example.com",
   "display_name": "New User",
   "role": "user",
-  "passphrase": "自動生成される64文字のランダムな文字列（または手動指定）"
+  "passphrase": "自動生成される64文字以上のランダムな文字列（または手動指定）"
 }
 ```
 
@@ -110,7 +110,7 @@ POST /api/admin/users
 ```
 
 #### 処理内容
-1. パスフレーズが指定されていない場合、64文字のランダムな文字列を生成
+1. パスフレーズが指定されていない場合、64文字以上のランダムな文字列を生成
 2. Argon2idでハッシュ化してデータベースに保存
 3. 初回ログイン用のパスフレーズを返す（平文）
 4. 管理者は、このパスフレーズを安全な方法で新規ユーザーに共有
@@ -203,7 +203,7 @@ POST /api/admin/users/:user_id/reset-passphrase
 #### リクエスト
 ```json
 {
-  "passphrase": "新しい64文字のパスフレーズ（省略時は自動生成）"
+  "passphrase": "新しい64文字以上のパスフレーズ（省略時は自動生成）"
 }
 ```
 
@@ -524,7 +524,7 @@ GET /api/admin/invitations/:token
 
 #### エンドポイント
 ```
-DELETE /api/admin/invitations/:token
+POST /api/admin/invitations/:token/revoke
 ```
 
 #### リクエスト
@@ -543,7 +543,7 @@ DELETE /api/admin/invitations/:token
 ```
 
 #### 処理内容
-- 招待レコードを削除（または無効化フラグを設定）
+- 招待レコードの無効化フラグを設定（`revoked = 1`）
 - 監査ログに記録
 
 ### 3.5 招待リンクからの登録履歴
@@ -574,7 +574,7 @@ GET /api/admin/invitations/:token/users
 
 ## 4. システム監視
 
-### 3.1 ダッシュボード概要
+### 4.1 ダッシュボード概要
 
 #### エンドポイント
 ```
@@ -593,7 +593,7 @@ GET /api/admin/dashboard/stats
 }
 ```
 
-### 3.2 監査ログ
+### 4.2 監査ログ
 
 #### エンドポイント
 ```
@@ -638,9 +638,9 @@ GET /api/admin/audit-logs?limit=100&offset=0&action=&user_id=
 }
 ```
 
-## 4. システム設定
+## 5. システム設定
 
-### 4.1 セキュリティ設定
+### 5.1 セキュリティ設定
 
 #### エンドポイント
 ```

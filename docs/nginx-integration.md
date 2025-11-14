@@ -288,8 +288,12 @@ func VerifyAuthHandler(c *gin.Context) {
         return
     }
 
-    // 2. Redisからセッション情報を取得
-    session, err := redis.Get(ctx, "session:"+sessionID).Result()
+    // 2. セッション情報を取得（SQLite3 または Redis）
+    // デフォルト構成（SQLite3）の場合:
+    //   SELECT user_id, email, role, expires_at FROM sessions WHERE session_id = ?
+    // 大規模環境（Redis）の場合:
+    //   redis.Get(ctx, "session:"+sessionID).Result()
+    session, err := sessionStore.Get(ctx, sessionID)
     if err != nil {
         c.Header("X-Auth-Redirect", "/login?redirect="+c.GetHeader("X-Original-URI"))
         c.Status(401)
@@ -325,12 +329,25 @@ func VerifyAuthHandler(c *gin.Context) {
 
 ## パフォーマンス最適化
 
-### 1. Redisによるセッションキャッシュ
+### 1. セッションストレージ
 
+**デフォルト構成（SQLite3）:**
+- セッション情報は `sessions` テーブルに保存
+- 十分高速（〜500ユーザー、〜50同時接続）
+- auth_request応答: 5-20ms
+- WALモードで並行読み取りを最適化
+
+**大規模環境（Redis - オプション）:**
 - セッション情報はRedisに保存
-- データベースへのアクセスを最小限に
+- 超高速（500+ユーザー、50+同時接続）
+- auth_request応答: 1-5ms
 - キー: `session:{session_id}`
 - TTL: セッションの有効期限と同じ（24時間）
+- データベースへのアクセスを最小限に
+
+**移行タイミング:**
+- auth_requestのレスポンスが50ms以上かかるようになったら
+- 同時接続数が100人を超えたら
 
 ### 2. コネクションプーリング
 
